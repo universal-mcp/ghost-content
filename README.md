@@ -1,6 +1,6 @@
-# Ghost-content Universal MCP Server
+# Ghost-Content Universal MCP Server
 
-This repository contains an implementation of an Ghost-content Universal MCP (Model Context Protocol) server. It provides a standardized interface for interacting with Ghost-content's SEO and backlink analysis tools through a unified API.
+This repository contains an implementation of an Ghost-Content Universal MCP (Model Context Protocol) server. It provides a standardized interface for interacting with Ghost-Content's SEO and backlink analysis tools through a unified API.
 
 The server is built using the Universal MCP framework.
 
@@ -8,7 +8,7 @@ This implementation follows the MCP specification, ensuring compatibility with o
 
 ## Usage
 
-You can start using Ghost-content directly from [agentr.dev](https://agentr.dev). Visit [agentr.dev/apps](https://agentr.dev/apps) and enable Ghost-content.
+You can start using Ghost-Content directly from [agentr.dev](https://agentr.dev). Visit [agentr.dev/apps](https://agentr.dev/apps) and enable Ghost-Content.
 
 If you have not used universal mcp before follow the setup instructions at [agentr.dev/quickstart](https://agentr.dev/quickstart)
 
