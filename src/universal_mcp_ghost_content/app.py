@@ -5,52 +5,93 @@ from loguru import logger
 
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
+from universal_mcp.exceptions import NotAuthorizedError
 
 class GhostContentApp(APIApplication):
     """
-    Base class for Universal MCP Applications.
+    Universal MCP Application for interacting with the Ghost Content API.
+    Credentials (Admin Domain, Content API Key, API Version) are loaded lazily
+    when an API tool is first executed.
     """
     def __init__(self, integration: Integration = None, **kwargs) -> None:
+        """
+        Initializes the GhostContentApp. Basic setup only, credential loading is deferred.
+        """
         super().__init__(name="ghost-content", integration=integration, **kwargs)
+        # Initialize attributes to defaults or None. They will be populated by _load_credentials.
         self._api_key: Optional[str] = None
         self._api_version: str = "v5.0"  # Default based on Ghost documentation examples
+        self.base_url: Optional[str] = None # Will be set based on admin_domain later
+        self._credentials_loaded: bool = False # Flag to ensure credentials load only once
+
+        logger.debug("GhostContentApp initialized. Credentials will be loaded on first API call.")
+
+    def _load_credentials(self) -> bool:
+        """
+        Loads credentials from the integration and sets up API key, version, and base URL.
+        This method is designed to run only once per instance.
+
+        Returns:
+            bool: True if credentials were loaded successfully (or already loaded),
+                  False if loading failed (e.g., no integration, missing keys).
+        """
+        if self._credentials_loaded:
+            return True # Already loaded, skip
+
+        logger.debug("Attempting to load Ghost Content API credentials...")
 
         if not self.integration:
-            logger.error(
-                "Ghost Content API integration not configured. "
-                "Admin domain, Content API key, and API version will use defaults or be missing."
-            )
-            # Allow initialization for potential use without integration, though API calls will fail.
-        else:
+            logger.error("Ghost Content API integration not configured. Cannot load credentials.")
+            return False
+
+        try:
             credentials = self.integration.get_credentials()
-            admin_domain = credentials.get("GHOST_ADMIN_DOMAIN")
-            self._api_key = credentials.get("GHOST_CONTENT_API_KEY")
-            # Use GHOST_API_VERSION from creds if available, else keep default
-            self._api_version = credentials.get("GHOST_API_VERSION", self._api_version)
+        except NotAuthorizedError as e:
+             # Handle cases where AgentRIntegration returns an authorization URL/message
+            logger.error(f"Authorization required or credentials unavailable for Ghost Content API: {e.message}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to get credentials from integration: {e}", exc_info=True)
+            return False
 
-            if not admin_domain:
-                logger.error("GHOST_ADMIN_DOMAIN not found in Ghost Content API integration credentials.")
-                # Base URL will not be properly set, API calls will likely fail or use incorrect URL.
-            else:
-                self.base_url = f"https://{admin_domain.rstrip('/')}/ghost/api/content/"
-            
-            if not self._api_key:
-                logger.error("GHOST_CONTENT_API_KEY not found in Ghost Content API integration credentials.")
-                # API calls will fail without the key.
+        admin_domain = credentials.get("GHOST_ADMIN_DOMAIN")
+        self._api_key = credentials.get("GHOST_CONTENT_API_KEY")
+        # Use GHOST_API_VERSION from creds if available, else keep default
+        self._api_version = credentials.get("GHOST_API_VERSION", self._api_version)
 
-        logger.info(
-            f"GhostContentApp initialized with base_url: {getattr(self, 'base_url', 'Not Set')} "
-            f"and API version: {self._api_version}"
-        )
+        missing_creds = []
+        if not admin_domain:
+            missing_creds.append("GHOST_ADMIN_DOMAIN")
+        else:
+            # Set base_url only if admin_domain is present
+            self.base_url = f"https://{admin_domain.rstrip('/')}/ghost/api/content/"
+
+        if not self._api_key:
+            missing_creds.append("GHOST_CONTENT_API_KEY")
+
+        if missing_creds:
+            logger.error(f"Missing required Ghost Content API credentials in integration: {', '.join(missing_creds)}")
+            # Mark as loaded to prevent retrying, but loading essentially failed.
+            self._credentials_loaded = True
+            return False
+        else:
+            logger.info(
+                f"Ghost Content API credentials loaded successfully. "
+                f"Base URL: {self.base_url}, API Version: {self._api_version}"
+            )
+            self._credentials_loaded = True
+            return True
 
     def _get_headers(self) -> dict[str, str]:
         """
         Override to provide specific headers for the Ghost Content API.
         Content API Key is a query parameter, not an Authorization header.
+        Uses the API version loaded by _load_credentials.
         """
         headers = super()._get_headers() # Get any headers from base class
         # Remove Authorization if base class adds it, as Content API uses key in params
         headers.pop("Authorization", None)
+        # _api_version will be default or loaded by _load_credentials before this is called
         headers["Accept-Version"] = self._api_version
         logger.debug(f"GhostContentApp generated headers: {headers}")
         return headers
@@ -58,11 +99,14 @@ class GhostContentApp(APIApplication):
     def _prepare_params(self, custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Prepares the query parameters, always including the Content API Key.
+        Assumes _api_key has been populated by _load_credentials.
         Removes None values from custom_params and formats lists as comma-separated strings.
         """
+        # This check now happens *after* _load_credentials should have run
         if not self._api_key:
-            logger.error("Ghost Content API key is not available.")
-            raise ValueError("Ghost Content API key is missing. Cannot make requests.")
+            logger.error("Ghost Content API key is not available (was not loaded successfully).")
+            # Raise ValueError here, caught by _execute_get_request
+            raise ValueError("Ghost Content API key is missing or could not be loaded.")
 
         final_params: Dict[str, Any] = {"key": self._api_key}
         if custom_params:
@@ -77,28 +121,57 @@ class GhostContentApp(APIApplication):
         return final_params
 
     def _execute_get_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        """Helper to execute GET request and handle common responses."""
-        if not hasattr(self, 'base_url') or not self.base_url:
-            logger.error("Base URL for GhostContentApp is not configured.")
-            return "Error: GhostContentApp base URL is not configured. Check GHOST_ADMIN_DOMAIN."
+        """
+        Helper to execute GET request. Ensures credentials are loaded first,
+        then prepares params and handles common responses.
+        """
+        # --- LAZY LOADING TRIGGER ---
+        # Attempt to load credentials if they haven't been loaded yet.
+        if not self._credentials_loaded:
+            if not self._load_credentials():
+                # If loading fails, return an informative error immediately.
+                return "Error: Failed to load Ghost Content API credentials. Check integration configuration and logs."
+        # --- End Lazy Loading ---
+
+        # Check if base_url was successfully set after loading credentials
+        if not self.base_url:
+            logger.error("Base URL for GhostContentApp is not configured (GHOST_ADMIN_DOMAIN likely missing or failed to load).")
+            return "Error: GhostContentApp base URL is not configured. Check GHOST_ADMIN_DOMAIN credential."
+
         try:
+            # _prepare_params will raise ValueError if API key is still missing after load attempt
             prepared_params = self._prepare_params(params)
-            response = self._get(endpoint.lstrip('/'), params=prepared_params) # _get is from APIApplication
+
+            # Call the actual HTTP GET method from the base APIApplication class
+            # self.client property in APIApplication ensures httpx.Client is initialized
+            # with correct base_url (now set) and headers (from _get_headers)
+            response = self.client.get(endpoint.lstrip('/'), params=prepared_params)
+            response.raise_for_status() # Check for HTTP errors (4xx, 5xx)
             return response.json()
+
         except httpx.HTTPStatusError as e:
             error_message = f"Error fetching {endpoint}: {e.response.status_code}"
             try:
                 error_details = e.response.json()
-                error_message += f" - {error_details}"
-            except Exception: # If response is not JSON
+                # Attempt to extract Ghost-specific error details if available
+                ghost_errors = error_details.get("errors", [])
+                if ghost_errors:
+                    err_msgs = [f"{err.get('message', 'Unknown Ghost error')} (type: {err.get('type', 'N/A')})" for err in ghost_errors]
+                    error_message += f" - Ghost API Errors: {'; '.join(err_msgs)}"
+                else: # Fallback to raw JSON if no standard 'errors' field
+                    error_message += f" - {error_details}"
+            except Exception: # If response is not JSON or JSON parsing fails
                 error_message += f" - {e.response.text}"
             logger.error(error_message)
             return error_message
         except ValueError as ve: # Catch missing API key from _prepare_params
-            logger.error(f"ValueError during request to {endpoint}: {ve}")
+            logger.error(f"Configuration error during request to {endpoint}: {ve}")
             return f"Configuration error: {ve}"
+        except httpx.RequestError as re: # Catch connection errors, timeouts etc.
+             logger.error(f"HTTP Request error during Ghost Content API call for {endpoint}: {re}")
+             return f"Network or request error fetching {endpoint}: {type(re).__name__} - {re}"
         except Exception as e:
-            logger.error(f"Unexpected error during Ghost Content API call for {endpoint}: {e}")
+            logger.error(f"Unexpected error during Ghost Content API call for {endpoint}: {e}", exc_info=True)
             return f"Unexpected error fetching {endpoint}: {type(e).__name__} - {e}"
 
     # --- Posts Tools ---
@@ -200,8 +273,6 @@ class GhostContentApp(APIApplication):
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None) -> Any:
         """Browse tiers. Parameters: include, fields, filter, limit, page, order."""
-        # Note: Content API for Tiers might have limited fields/include options compared to Admin API.
-        # The documentation specifically mentions: include=benefits,monthly_price,yearly_price
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order
@@ -211,9 +282,6 @@ class GhostContentApp(APIApplication):
     # --- Settings Tool ---
     def browse_settings(self) -> Any:
         """Browse site settings."""
-        # The documentation says: "This endpoint doesn’t accept any query parameters."
-        # However, the general Content API parameters section lists "include" and "fields" for all endpoints.
-        # We will call it without specific parameters here, relying on _prepare_params to add the key.
         return self._execute_get_request("settings/", params=None)
 
     def list_tools(self) -> List[Callable]:
