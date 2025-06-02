@@ -179,7 +179,27 @@ class GhostContentApp(APIApplication):
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None,
                      formats: Optional[List[str]] = None) -> Any:
-        """Browse posts. Parameters: include, fields, filter, limit, page, order, formats."""
+        """
+        Retrieves and browses posts from a data source based on provided parameters.
+        
+        Args:
+            include: A list of fields to include in the response.
+            fields: A list of specific fields to retrieve.
+            filter: A string to filter the posts by.
+            limit: The maximum number of posts to return.
+            page: The page number to start retrieving posts from.
+            order: The order in which to retrieve posts.
+            formats: A list of formats in which to retrieve posts.
+        
+        Returns:
+            The result of the posts retrieval, which may be in various formats depending on the request parameters.
+        
+        Raises:
+            Exception: An exception might be raised if there is an issue with the request execution, such as network errors or invalid parameters.
+        
+        Tags:
+            browse, fetch, posts, management, important
+        """
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order, "formats": formats
@@ -188,13 +208,44 @@ class GhostContentApp(APIApplication):
 
     def read_post_by_id(self, id: str, include: Optional[List[str]] = None,
                         fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
-        """Read a post by its ID. Parameters: id, include, fields, formats."""
+        """
+        Retrieves a post by its ID, optionally including additional data or specific fields.
+        
+        Args:
+            id: The unique identifier of the post to retrieve.
+            include: Optional list of additional data to include in the response.
+            fields: Optional list of specific fields to retrieve for the post.
+            formats: Optional list of formats for the post data.
+        
+        Returns:
+            The retrieved post data in the specified format.
+        
+        Tags:
+            read, post, management
+        """
         params = {"include": include, "fields": fields, "formats": formats}
         return self._execute_get_request(f"posts/{id}/", params)
 
     def read_post_by_slug(self, slug: str, include: Optional[List[str]] = None,
                           fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
-        """Read a post by its slug. Parameters: slug, include, fields, formats."""
+        """
+        Retrieves a post by its slug, with optional parameters to specify included data, select specific fields, or request particular data formats.
+        
+        Args:
+            slug: Unique slug identifier of the post to retrieve.
+            include: Optional list of related objects to include with the post.
+            fields: Optional list of fields to include in the returned post data.
+            formats: Optional list of data formats in which to return the post.
+        
+        Returns:
+            The retrieved post data or response payload, as returned by the underlying GET request executor.
+        
+        Raises:
+            Exception: May be raised if the underlying GET request fails, e.g., due to network issues, invalid parameters, or unauthorized access.
+        
+        Tags:
+            read, post, fetch, management
+        """
         params = {"include": include, "fields": fields, "formats": formats}
         return self._execute_get_request(f"posts/slug/{slug}/", params)
 
@@ -202,7 +253,23 @@ class GhostContentApp(APIApplication):
     def browse_authors(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                        filter: Optional[str] = None, limit: Optional[int] = None,
                        page: Optional[int] = None, order: Optional[str] = None) -> Any:
-        """Browse authors. Parameters: include, fields, filter, limit, page, order."""
+        """
+        Browse authors using various filtering and pagination options.
+        
+        Args:
+            include: Optional list of fields to include in the response.
+            fields: Optional list of specific fields to retrieve.
+            filter: Optional string filter to apply to the results.
+            limit: Optional integer specifying the maximum number of results to return.
+            page: Optional integer indicating the page number.
+            order: Optional string defining the order of results.
+        
+        Returns:
+            Any data returned from the GET request to the authors endpoint.
+        
+        Tags:
+            list, management, important
+        """
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order
@@ -211,13 +278,39 @@ class GhostContentApp(APIApplication):
 
     def read_author_by_id(self, id: str, include: Optional[List[str]] = None,
                           fields: Optional[List[str]] = None) -> Any:
-        """Read an author by ID. Parameters: id, include, fields."""
+        """
+        Read an author from the database by their unique ID.
+        
+        Args:
+            id: The unique identifier of the author.
+            include: Optional list of related resources to include in the response.
+            fields: Optional list of fields to retrieve from the author record.
+        
+        Returns:
+            The author data as a JSON response or other arbitrary data type.
+        
+        Tags:
+            read, author, data-access
+        """
         params = {"include": include, "fields": fields}
         return self._execute_get_request(f"authors/{id}/", params)
 
     def read_author_by_slug(self, slug: str, include: Optional[List[str]] = None,
                             fields: Optional[List[str]] = None) -> Any:
-        """Read an author by slug. Parameters: slug, include, fields."""
+        """
+        Retrieve an author's information by their slug.
+        
+        Args:
+            slug: The unique slug of the author to retrieve.
+            include: Optional list of fields to include in the response.
+            fields: Optional list of fields to request in the response.
+        
+        Returns:
+            The result of the GET request to retrieve the author's information.
+        
+        Tags:
+            fetch, author, management
+        """
         params = {"include": include, "fields": fields}
         return self._execute_get_request(f"authors/slug/{slug}/", params)
 
@@ -225,7 +318,27 @@ class GhostContentApp(APIApplication):
     def browse_tags(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                     filter: Optional[str] = None, limit: Optional[int] = None,
                     page: Optional[int] = None, order: Optional[str] = None) -> Any:
-        """Browse tags. Parameters: include, fields, filter, limit, page, order."""
+        """
+        Browse and retrieve tags based on specified parameters.
+        
+        Args:
+            include: Optional list of tags or fields to include.
+            fields: Optional list of specific fields to retrieve.
+            filter: Optional filter expression to apply.
+            limit: Optional limit on the number of tags to return.
+            page: Optional page number for pagination.
+            order: Optional ordering criteria for the returned tags.
+        
+        Returns:
+            Response from the GET request to retrieve tags.
+        
+        Raises:
+            ConnectionError: Raised if the connection to the server fails.
+            TimeoutError: Raised if the request times out.
+        
+        Tags:
+            browse, tags, management, important
+        """
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order
@@ -234,13 +347,45 @@ class GhostContentApp(APIApplication):
 
     def read_tag_by_id(self, id: str, include: Optional[List[str]] = None,
                        fields: Optional[List[str]] = None) -> Any:
-        """Read a tag by ID. Parameters: id, include, fields."""
+        """
+        Retrieves a tag's details by its unique identifier, optionally filtering by included and field sets.
+        
+        Args:
+            id: str: The unique identifier of the tag to retrieve.
+            include: Optional[List[str]]: Additional related resources or attributes to include in the response.
+            fields: Optional[List[str]]: Specific fields to return in the response.
+        
+        Returns:
+            Any: The retrieved tag object, with details as specified by the included and field parameters. The exact type depends on the server response.
+        
+        Raises:
+            Exception: Depending on the backend, may raise connection, authentication, or data retrieval exceptions.
+        
+        Tags:
+            read, tag, search, fetch, api, management
+        """
         params = {"include": include, "fields": fields}
         return self._execute_get_request(f"tags/{id}/", params)
 
     def read_tag_by_slug(self, slug: str, include: Optional[List[str]] = None,
                          fields: Optional[List[str]] = None) -> Any:
-        """Read a tag by slug. Parameters: slug, include, fields."""
+        """
+        Retrieve tag information identified by a unique slug, with optional inclusion of related data and selective fields.
+        
+        Args:
+            slug: str: The unique slug identifier of the tag to retrieve.
+            include: Optional[List[str]]: A list of related resource names to include in the response, or None to include none.
+            fields: Optional[List[str]]: A list of specific fields to return for the tag, or None to return all fields.
+        
+        Returns:
+            Any: The data corresponding to the requested tag, potentially including related resources and filtered fields, as returned by the GET request.
+        
+        Raises:
+            RequestException: If the underlying GET request fails due to network issues, invalid slug, or server errors.
+        
+        Tags:
+            read, retrieve, get
+        """
         params = {"include": include, "fields": fields}
         return self._execute_get_request(f"tags/slug/{slug}/", params)
 
@@ -249,7 +394,27 @@ class GhostContentApp(APIApplication):
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None,
                      formats: Optional[List[str]] = None) -> Any:
-        """Browse pages. Parameters: include, fields, filter, limit, page, order, formats."""
+        """
+        Retrieves a list of pages using optional filtering, pagination, and formatting parameters.
+        
+        Args:
+            include: Optional list of related resources or entities to include in the response.
+            fields: Optional list of specific fields to include for each page in the response.
+            filter: Optional string to filter the pages based on certain criteria.
+            limit: Optional integer specifying the maximum number of pages to return.
+            page: Optional integer specifying the page number for pagination.
+            order: Optional string defining the sorting order of the returned pages.
+            formats: Optional list of formats that the pages should be returned in.
+        
+        Returns:
+            The result of the GET request to the 'pages/' endpoint, typically a collection of pages matching the query parameters.
+        
+        Raises:
+            RequestException: If the underlying GET request fails due to network issues, invalid parameters, or server errors.
+        
+        Tags:
+            browse, list, management, important
+        """
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order, "formats": formats
@@ -258,13 +423,44 @@ class GhostContentApp(APIApplication):
 
     def read_page_by_id(self, id: str, include: Optional[List[str]] = None,
                         fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
-        """Read a page by ID. Parameters: id, include, fields, formats."""
+        """
+        Read a page by ID, allowing for optional inclusion of additional data, specific fields, and formats.
+        
+        Args:
+            id: The unique identifier of the page to be read.
+            include: Optional list of related data to include in the response.
+            fields: Optional list of fields to filter the response by.
+            formats: Optional list of formats for the response data.
+        
+        Returns:
+            The result of the GET request to read the page.
+        
+        Tags:
+            read, page, data-retrieval
+        """
         params = {"include": include, "fields": fields, "formats": formats}
         return self._execute_get_request(f"pages/{id}/", params)
 
     def read_page_by_slug(self, slug: str, include: Optional[List[str]] = None,
                           fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
-        """Read a page by slug. Parameters: slug, include, fields, formats."""
+        """
+        Retrieve a page's content and metadata by its slug identifier, optionally including related data, specific fields, and content formats.
+        
+        Args:
+            slug: The unique slug string identifying the page to be retrieved.
+            include: Optional list of related resource names to include in the response.
+            fields: Optional list of specific fields of the page to return.
+            formats: Optional list of content formats to retrieve for the page.
+        
+        Returns:
+            The response from the GET request containing the page data, typically as a parsed JSON object or equivalent.
+        
+        Raises:
+            RequestException: If the underlying GET request fails due to network issues, invalid slug, or server errors.
+        
+        Tags:
+            read, get, page, slug, http-request
+        """
         params = {"include": include, "fields": fields, "formats": formats}
         return self._execute_get_request(f"pages/slug/{slug}/", params)
 
@@ -272,7 +468,26 @@ class GhostContentApp(APIApplication):
     def browse_tiers(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None) -> Any:
-        """Browse tiers. Parameters: include, fields, filter, limit, page, order."""
+        """
+        Browse tiers based on optional filters and pagination.
+        
+        Args:
+            include: List of items to include in the response, if applicable.
+            fields: List of fields to retrieve from the tiers.
+            filter: String filter to apply to the tiers.
+            limit: Maximum number of tiers to return in the response.
+            page: Page number for pagination.
+            order: Ordering parameter for the tiers.
+        
+        Returns:
+            Response from the tiers browsing request.
+        
+        Raises:
+            Exception: Raised on any issue during the execution of the GET request.
+        
+        Tags:
+            browse, pagination, filter, management, important
+        """
         params = {
             "include": include, "fields": fields, "filter": filter,
             "limit": limit, "page": page, "order": order
@@ -281,7 +496,18 @@ class GhostContentApp(APIApplication):
 
     # --- Settings Tool ---
     def browse_settings(self) -> Any:
-        """Browse site settings."""
+        """
+        Fetches site settings by making a GET request to the settings endpoint.
+        
+        Args:
+            None: This function does not accept any parameters.
+        
+        Returns:
+            The result of the GET request to retrieve site settings.
+        
+        Tags:
+            fetch, settings, management, important
+        """
         return self._execute_get_request("settings/", params=None)
 
     def list_tools(self) -> List[Callable]:
