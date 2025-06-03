@@ -1,184 +1,145 @@
-from typing import Any, List, Dict, Optional, Callable
-
-import httpx
+import json
+from typing import Any, Dict, Optional, Callable, List
 from loguru import logger
 
-from universal_mcp.applications import APIApplication
+from universal_mcp.applications.application import APIApplication
 from universal_mcp.integrations import Integration
-from universal_mcp.exceptions import NotAuthorizedError
+
 
 class GhostContentApp(APIApplication):
     """
-    Universal MCP Application for interacting with the Ghost Content API.
-    Credentials (Admin Domain, Content API Key, API Version) are loaded lazily
-    when an API tool is first executed.
+    Application for interacting with the Ghost Content API.
+    Handles operations related to posts, pages, tags, authors, tiers, newsletters,
+    offers, products, collections, and general site information.
     """
-    def __init__(self, integration: Integration = None, **kwargs) -> None:
+
+    def __init__(self, integration: Integration) -> None:
         """
-        Initializes the GhostContentApp. Basic setup only, credential loading is deferred.
+        Initialize the GhostContentApp.
+
+        Args:
+            integration: The integration configuration containing the Ghost site URL
+                         and Content API key.
+                         It is expected that the integration provides 'url' (e.g.,
+                         "https://your-ghost-site.com") and 'key' (the Content API key)
+                         via `integration.get_credentials()`.
         """
-        super().__init__(name="ghost-content", integration=integration, **kwargs)
-        # Initialize attributes to defaults or None. They will be populated by _load_credentials.
-        self._api_key: Optional[str] = None
-        self._api_version: str = "v5.0"  # Default based on Ghost documentation examples
-        self.base_url: Optional[str] = None # Will be set based on admin_domain later
-        self._credentials_loaded: bool = False # Flag to ensure credentials load only once
+        super().__init__(name="ghost-content", integration=integration)
+        self._base_url = None
+        self._api_key = None  # Cache the API key
+        self._version = None # Cache the version
 
-        logger.debug("GhostContentApp initialized. Credentials will be loaded on first API call.")
-
-    def _load_credentials(self) -> bool:
+    @property
+    def base_url(self) -> str:
         """
-        Loads credentials from the integration and sets up API key, version, and base URL.
-        This method is designed to run only once per instance.
-
-        Returns:
-            bool: True if credentials were loaded successfully (or already loaded),
-                  False if loading failed (e.g., no integration, missing keys).
+        Get the base URL for the Ghost Content API.
+        This is constructed from the integration's credentials.
         """
-        if self._credentials_loaded:
-            return True # Already loaded, skip
-
-        logger.debug("Attempting to load Ghost Content API credentials...")
-
-        if not self.integration:
-            logger.error("Ghost Content API integration not configured. Cannot load credentials.")
-            return False
-
-        try:
+        if not self._base_url:
             credentials = self.integration.get_credentials()
-        except NotAuthorizedError as e:
-             # Handle cases where AgentRIntegration returns an authorization URL/message
-            logger.error(f"Authorization required or credentials unavailable for Ghost Content API: {e.message}")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to get credentials from integration: {e}", exc_info=True)
-            return False
+            ghost_url = credentials.get("url") or credentials.get("admin_domain")
+            if not ghost_url:
+                logger.error("GhostContentApp: Missing 'url' or 'admin_domain' in integration credentials.")
+                raise ValueError("Integration credentials must include 'url' or 'admin_domain' for the Ghost site.")
 
-        admin_domain = credentials.get("GHOST_ADMIN_DOMAIN")
-        self._api_key = credentials.get("GHOST_CONTENT_API_KEY")
-        # Use GHOST_API_VERSION from creds if available, else keep default
-        self._api_version = credentials.get("GHOST_API_VERSION", self._api_version)
+            self._base_url = f"{ghost_url.rstrip('/')}/api/content/"
+            logger.info(f"GhostContentApp: Constructed base URL as {self._base_url}")
+        return self._base_url
 
-        missing_creds = []
-        if not admin_domain:
-            missing_creds.append("GHOST_ADMIN_DOMAIN")
-        else:
-            # Set base_url only if admin_domain is present
-            self.base_url = f"https://{admin_domain.rstrip('/')}/ghost/api/content/"
+    @base_url.setter
+    def base_url(self, base_url: str) -> None:
+        """
+        Set the base URL for the Ghost Content API.
+        This is useful for testing or if the base URL changes.
 
+        Args:
+            base_url: The new base URL to set.
+        """
+        self._base_url = base_url
+        logger.info(f"GhostContentApp: Base URL set to {self._base_url}")
+
+    @property
+    def _get_api_key(self) -> str:
+        """
+        Retrieves the Ghost Content API key from integration credentials.
+        Caches the key after the first retrieval.
+        """
         if not self._api_key:
-            missing_creds.append("GHOST_CONTENT_API_KEY")
+            credentials = self.integration.get_credentials()
+            api_key = credentials.get("key") or credentials.get("api_key") or credentials.get("API_KEY")
+            if not api_key:
+                logger.error("GhostContentApp: Content API key ('key') not found in integration credentials.")
+                raise ValueError("Integration credentials must include the Ghost Content API 'key'.")
+            self._api_key = api_key
+        return self._api_key
 
-        if missing_creds:
-            logger.error(f"Missing required Ghost Content API credentials in integration: {', '.join(missing_creds)}")
-            # Mark as loaded to prevent retrying, but loading essentially failed.
-            self._credentials_loaded = True
-            return False
-        else:
-            logger.info(
-                f"Ghost Content API credentials loaded successfully. "
-                f"Base URL: {self.base_url}, API Version: {self._api_version}"
-            )
-            self._credentials_loaded = True
-            return True
+    @property
+    def _get_version(self) -> str:
+        """
+        Retrieves the Ghost Content API version from integration credentials.
+        Caches the version after the first retrieval.
+        """
+        if not self._version:
+            credentials = self.integration.get_credentials()
+            version = credentials.get("api_version")
+            if not version:
+                logger.warning("GhostContentApp: 'version' not found in integration credentials. Defaulting to 'v5.0'.")
+                version = "v5.0" # Default to a common version if not specified
+            self._version = version
+        return self._version
 
-    def _get_headers(self) -> dict[str, str]:
+    def _get_headers(self) -> Dict[str, str]:
         """
-        Override to provide specific headers for the Ghost Content API.
-        Content API Key is a query parameter, not an Authorization header.
-        Uses the API version loaded by _load_credentials.
+        Get the headers for Ghost Content API requests.
+        Overrides the base class method to include the `Accept-Version` header.
         """
-        headers = super()._get_headers() # Get any headers from base class
-        # Remove Authorization if base class adds it, as Content API uses key in params
-        headers.pop("Authorization", None)
-        # _api_version will be default or loaded by _load_credentials before this is called
-        headers["Accept-Version"] = self._api_version
-        logger.debug(f"GhostContentApp generated headers: {headers}")
+        headers = super()._get_headers() # Get base headers (e.g., Content-Type)
+
+        # Add the Accept-Version header as per Ghost Content API documentation
+        headers["Accept-Version"] = self._get_version
+        logger.debug(f"GhostContentApp: Using Accept-Version: {self._get_version} in headers.")
         return headers
 
-    def _prepare_params(self, custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _build_common_params(
+        self,
+        include: Optional[List[str]] = None,
+        fields: Optional[List[str]] = None,
+        filter: Optional[str] = None, # Changed from filter_str to filter
+        limit: Optional[int] = None,
+        order: Optional[str] = None,
+        page: Optional[int] = None,
+        formats: Optional[List[str]] = None,  # Specific to posts/pages for content format
+        visibility: Optional[str] = None,     # Specific to posts/pages/tiers for visibility
+    ) -> Dict[str, Any]:
         """
-        Prepares the query parameters, always including the Content API Key.
-        Assumes _api_key has been populated by _load_credentials.
-        Removes None values from custom_params and formats lists as comma-separated strings.
+        Helper to build common query parameters for Ghost Content API requests,
+        including the mandatory API key.
         """
-        # This check now happens *after* _load_credentials should have run
-        if not self._api_key:
-            logger.error("Ghost Content API key is not available (was not loaded successfully).")
-            # Raise ValueError here, caught by _execute_get_request
-            raise ValueError("Ghost Content API key is missing or could not be loaded.")
+        params: Dict[str, Any] = {"key": self._get_api_key}
 
-        final_params: Dict[str, Any] = {"key": self._api_key}
-        if custom_params:
-            for k, v in custom_params.items():
-                if v is not None:
-                    if isinstance(v, bool):
-                        final_params[k] = str(v).lower()
-                    elif isinstance(v, list):
-                        final_params[k] = ",".join(map(str, v))
-                    else:
-                        final_params[k] = str(v) # Ensure all params are strings
-        return final_params
-
-    def _execute_get_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        """
-        Helper to execute GET request. Ensures credentials are loaded first,
-        then prepares params and handles common responses.
-        """
-        # --- LAZY LOADING TRIGGER ---
-        # Attempt to load credentials if they haven't been loaded yet.
-        if not self._credentials_loaded:
-            if not self._load_credentials():
-                # If loading fails, return an informative error immediately.
-                return "Error: Failed to load Ghost Content API credentials. Check integration configuration and logs."
-        # --- End Lazy Loading ---
-
-        # Check if base_url was successfully set after loading credentials
-        if not self.base_url:
-            logger.error("Base URL for GhostContentApp is not configured (GHOST_ADMIN_DOMAIN likely missing or failed to load).")
-            return "Error: GhostContentApp base URL is not configured. Check GHOST_ADMIN_DOMAIN credential."
-
-        try:
-            # _prepare_params will raise ValueError if API key is still missing after load attempt
-            prepared_params = self._prepare_params(params)
-
-            # Call the actual HTTP GET method from the base APIApplication class
-            # self.client property in APIApplication ensures httpx.Client is initialized
-            # with correct base_url (now set) and headers (from _get_headers)
-            response = self.client.get(endpoint.lstrip('/'), params=prepared_params)
-            response.raise_for_status() # Check for HTTP errors (4xx, 5xx)
-            return response.json()
-
-        except httpx.HTTPStatusError as e:
-            error_message = f"Error fetching {endpoint}: {e.response.status_code}"
-            try:
-                error_details = e.response.json()
-                # Attempt to extract Ghost-specific error details if available
-                ghost_errors = error_details.get("errors", [])
-                if ghost_errors:
-                    err_msgs = [f"{err.get('message', 'Unknown Ghost error')} (type: {err.get('type', 'N/A')})" for err in ghost_errors]
-                    error_message += f" - Ghost API Errors: {'; '.join(err_msgs)}"
-                else: # Fallback to raw JSON if no standard 'errors' field
-                    error_message += f" - {error_details}"
-            except Exception: # If response is not JSON or JSON parsing fails
-                error_message += f" - {e.response.text}"
-            logger.error(error_message)
-            return error_message
-        except ValueError as ve: # Catch missing API key from _prepare_params
-            logger.error(f"Configuration error during request to {endpoint}: {ve}")
-            return f"Configuration error: {ve}"
-        except httpx.RequestError as re: # Catch connection errors, timeouts etc.
-             logger.error(f"HTTP Request error during Ghost Content API call for {endpoint}: {re}")
-             return f"Network or request error fetching {endpoint}: {type(re).__name__} - {re}"
-        except Exception as e:
-            logger.error(f"Unexpected error during Ghost Content API call for {endpoint}: {e}", exc_info=True)
-            return f"Unexpected error fetching {endpoint}: {type(e).__name__} - {e}"
+        if include:
+            params["include"] = ",".join(include)
+        if fields:
+            params["fields"] = ",".join(fields)
+        if filter: # Use 'filter' here
+            params["filter"] = filter
+        if limit is not None:
+            params["limit"] = limit
+        if order:
+            params["order"] = order
+        if page is not None:
+            params["page"] = page
+        if formats:
+            params["formats"] = ",".join(formats)
+        if visibility:
+            params["visibility"] = visibility
+        return params
 
     # --- Posts Tools ---
     def browse_posts(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None,
-                     formats: Optional[List[str]] = None) -> Any:
+                     formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type to Dict[str, Any]
         """
         Retrieves and browses posts from a data source based on provided parameters.
         
@@ -195,19 +156,22 @@ class GhostContentApp(APIApplication):
             The result of the posts retrieval, which may be in various formats depending on the request parameters.
         
         Raises:
-            Exception: An exception might be raised if there is an issue with the request execution, such as network errors or invalid parameters.
+            httpx.HTTPError: An exception might be raised if there is an issue with the request execution, such as network errors or invalid parameters.
         
         Tags:
             browse, fetch, posts, management, important
         """
-        params = {
-            "include": include, "fields": fields, "filter": filter,
-            "limit": limit, "page": page, "order": order, "formats": formats
-        }
-        return self._execute_get_request("posts/", params)
+        url = f"{self.base_url}posts/"
+        # Removed 'visibility' from params as it's not in the method signature
+        params = self._build_common_params(
+            include=include, fields=fields, filter=filter,
+            limit=limit, page=page, order=order, formats=formats
+        )
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_post_by_id(self, id: str, include: Optional[List[str]] = None,
-                        fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
+                        fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieves a post by its ID, optionally including additional data or specific fields.
         
@@ -220,14 +184,19 @@ class GhostContentApp(APIApplication):
         Returns:
             The retrieved post data in the specified format.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             read, post, management
         """
-        params = {"include": include, "fields": fields, "formats": formats}
-        return self._execute_get_request(f"posts/{id}/", params)
+        url = f"{self.base_url}posts/{id}/"
+        params = self._build_common_params(include=include, fields=fields, formats=formats)
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_post_by_slug(self, slug: str, include: Optional[List[str]] = None,
-                          fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
+                          fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieves a post by its slug, with optional parameters to specify included data, select specific fields, or request particular data formats.
         
@@ -241,18 +210,20 @@ class GhostContentApp(APIApplication):
             The retrieved post data or response payload, as returned by the underlying GET request executor.
         
         Raises:
-            Exception: May be raised if the underlying GET request fails, e.g., due to network issues, invalid parameters, or unauthorized access.
+            httpx.HTTPError: May be raised if the underlying GET request fails, e.g., due to network issues, invalid parameters, or unauthorized access.
         
         Tags:
             read, post, fetch, management
         """
-        params = {"include": include, "fields": fields, "formats": formats}
-        return self._execute_get_request(f"posts/slug/{slug}/", params)
+        url = f"{self.base_url}posts/slug/{slug}/"
+        params = self._build_common_params(include=include, fields=fields, formats=formats)
+        response = self._get(url, params=params)
+        return response.json()
 
     # --- Authors Tools ---
     def browse_authors(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                        filter: Optional[str] = None, limit: Optional[int] = None,
-                       page: Optional[int] = None, order: Optional[str] = None) -> Any:
+                       page: Optional[int] = None, order: Optional[str] = None) -> Dict[str, Any]: # Changed return type
         """
         Browse authors using various filtering and pagination options.
         
@@ -267,17 +238,22 @@ class GhostContentApp(APIApplication):
         Returns:
             Any data returned from the GET request to the authors endpoint.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             list, management, important
         """
-        params = {
-            "include": include, "fields": fields, "filter": filter,
-            "limit": limit, "page": page, "order": order
-        }
-        return self._execute_get_request("authors/", params)
+        url = f"{self.base_url}authors/"
+        params = self._build_common_params(
+            include=include, fields=fields, filter=filter,
+            limit=limit, page=page, order=order
+        )
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_author_by_id(self, id: str, include: Optional[List[str]] = None,
-                          fields: Optional[List[str]] = None) -> Any:
+                          fields: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Read an author from the database by their unique ID.
         
@@ -289,14 +265,19 @@ class GhostContentApp(APIApplication):
         Returns:
             The author data as a JSON response or other arbitrary data type.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             read, author, data-access
         """
-        params = {"include": include, "fields": fields}
-        return self._execute_get_request(f"authors/{id}/", params)
+        url = f"{self.base_url}authors/{id}/"
+        params = self._build_common_params(include=include, fields=fields)
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_author_by_slug(self, slug: str, include: Optional[List[str]] = None,
-                            fields: Optional[List[str]] = None) -> Any:
+                            fields: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieve an author's information by their slug.
         
@@ -308,16 +289,21 @@ class GhostContentApp(APIApplication):
         Returns:
             The result of the GET request to retrieve the author's information.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             fetch, author, management
         """
-        params = {"include": include, "fields": fields}
-        return self._execute_get_request(f"authors/slug/{slug}/", params)
+        url = f"{self.base_url}authors/slug/{slug}/"
+        params = self._build_common_params(include=include, fields=fields)
+        response = self._get(url, params=params)
+        return response.json()
 
     # --- Tags Tools ---
     def browse_tags(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                     filter: Optional[str] = None, limit: Optional[int] = None,
-                    page: Optional[int] = None, order: Optional[str] = None) -> Any:
+                    page: Optional[int] = None, order: Optional[str] = None) -> Dict[str, Any]: # Changed return type
         """
         Browse and retrieve tags based on specified parameters.
         
@@ -333,20 +319,21 @@ class GhostContentApp(APIApplication):
             Response from the GET request to retrieve tags.
         
         Raises:
-            ConnectionError: Raised if the connection to the server fails.
-            TimeoutError: Raised if the request times out.
+            httpx.HTTPError: Raised if the connection to the server fails, or request times out.
         
         Tags:
             browse, tags, management, important
         """
-        params = {
-            "include": include, "fields": fields, "filter": filter,
-            "limit": limit, "page": page, "order": order
-        }
-        return self._execute_get_request("tags/", params)
+        url = f"{self.base_url}tags/"
+        params = self._build_common_params(
+            include=include, fields=fields, filter=filter,
+            limit=limit, page=page, order=order
+        )
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_tag_by_id(self, id: str, include: Optional[List[str]] = None,
-                       fields: Optional[List[str]] = None) -> Any:
+                       fields: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieves a tag's details by its unique identifier, optionally filtering by included and field sets.
         
@@ -359,16 +346,18 @@ class GhostContentApp(APIApplication):
             Any: The retrieved tag object, with details as specified by the included and field parameters. The exact type depends on the server response.
         
         Raises:
-            Exception: Depending on the backend, may raise connection, authentication, or data retrieval exceptions.
+            httpx.HTTPError: Depending on the backend, may raise connection, authentication, or data retrieval exceptions.
         
         Tags:
             read, tag, search, fetch, api, management
         """
-        params = {"include": include, "fields": fields}
-        return self._execute_get_request(f"tags/{id}/", params)
+        url = f"{self.base_url}tags/{id}/"
+        params = self._build_common_params(include=include, fields=fields)
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_tag_by_slug(self, slug: str, include: Optional[List[str]] = None,
-                         fields: Optional[List[str]] = None) -> Any:
+                         fields: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieve tag information identified by a unique slug, with optional inclusion of related data and selective fields.
         
@@ -381,19 +370,21 @@ class GhostContentApp(APIApplication):
             Any: The data corresponding to the requested tag, potentially including related resources and filtered fields, as returned by the GET request.
         
         Raises:
-            RequestException: If the underlying GET request fails due to network issues, invalid slug, or server errors.
+            httpx.HTTPError: If the underlying GET request fails due to network issues, invalid slug, or server errors.
         
         Tags:
             read, retrieve, get
         """
-        params = {"include": include, "fields": fields}
-        return self._execute_get_request(f"tags/slug/{slug}/", params)
+        url = f"{self.base_url}tags/slug/{slug}/"
+        params = self._build_common_params(include=include, fields=fields)
+        response = self._get(url, params=params)
+        return response.json()
 
     # --- Pages Tools ---
     def browse_pages(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                      filter: Optional[str] = None, limit: Optional[int] = None,
                      page: Optional[int] = None, order: Optional[str] = None,
-                     formats: Optional[List[str]] = None) -> Any:
+                     formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieves a list of pages using optional filtering, pagination, and formatting parameters.
         
@@ -410,19 +401,22 @@ class GhostContentApp(APIApplication):
             The result of the GET request to the 'pages/' endpoint, typically a collection of pages matching the query parameters.
         
         Raises:
-            RequestException: If the underlying GET request fails due to network issues, invalid parameters, or server errors.
+            httpx.HTTPError: If the underlying GET request fails due to network issues, invalid parameters, or server errors.
         
         Tags:
             browse, list, management, important
         """
-        params = {
-            "include": include, "fields": fields, "filter": filter,
-            "limit": limit, "page": page, "order": order, "formats": formats
-        }
-        return self._execute_get_request("pages/", params)
+        url = f"{self.base_url}pages/"
+        # Removed 'visibility' from params as it's not in the method signature
+        params = self._build_common_params(
+            include=include, fields=fields, filter=filter,
+            limit=limit, page=page, order=order, formats=formats
+        )
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_page_by_id(self, id: str, include: Optional[List[str]] = None,
-                        fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
+                        fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Read a page by ID, allowing for optional inclusion of additional data, specific fields, and formats.
         
@@ -435,14 +429,19 @@ class GhostContentApp(APIApplication):
         Returns:
             The result of the GET request to read the page.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             read, page, data-retrieval
         """
-        params = {"include": include, "fields": fields, "formats": formats}
-        return self._execute_get_request(f"pages/{id}/", params)
+        url = f"{self.base_url}pages/{id}/"
+        params = self._build_common_params(include=include, fields=fields, formats=formats)
+        response = self._get(url, params=params)
+        return response.json()
 
     def read_page_by_slug(self, slug: str, include: Optional[List[str]] = None,
-                          fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Any:
+                          fields: Optional[List[str]] = None, formats: Optional[List[str]] = None) -> Dict[str, Any]: # Changed return type
         """
         Retrieve a page's content and metadata by its slug identifier, optionally including related data, specific fields, and content formats.
         
@@ -456,18 +455,20 @@ class GhostContentApp(APIApplication):
             The response from the GET request containing the page data, typically as a parsed JSON object or equivalent.
         
         Raises:
-            RequestException: If the underlying GET request fails due to network issues, invalid slug, or server errors.
+            httpx.HTTPError: If the underlying GET request fails due to network issues, invalid slug, or server errors.
         
         Tags:
             read, get, page, slug, http-request
         """
-        params = {"include": include, "fields": fields, "formats": formats}
-        return self._execute_get_request(f"pages/slug/{slug}/", params)
+        url = f"{self.base_url}pages/slug/{slug}/"
+        params = self._build_common_params(include=include, fields=fields, formats=formats)
+        response = self._get(url, params=params)
+        return response.json()
 
     # --- Tiers Tool ---
     def browse_tiers(self, include: Optional[List[str]] = None, fields: Optional[List[str]] = None,
                      filter: Optional[str] = None, limit: Optional[int] = None,
-                     page: Optional[int] = None, order: Optional[str] = None) -> Any:
+                     page: Optional[int] = None, order: Optional[str] = None) -> Dict[str, Any]: # Changed return type
         """
         Browse tiers based on optional filters and pagination.
         
@@ -483,19 +484,22 @@ class GhostContentApp(APIApplication):
             Response from the tiers browsing request.
         
         Raises:
-            Exception: Raised on any issue during the execution of the GET request.
+            httpx.HTTPError: Raised on any issue during the execution of the GET request.
         
         Tags:
             browse, pagination, filter, management, important
         """
-        params = {
-            "include": include, "fields": fields, "filter": filter,
-            "limit": limit, "page": page, "order": order
-        }
-        return self._execute_get_request("tiers/", params)
+        url = f"{self.base_url}tiers/"
+        # Removed 'visibility' from params as it's not in the method signature
+        params = self._build_common_params(
+            include=include, fields=fields, filter=filter,
+            limit=limit, page=page, order=order
+        )
+        response = self._get(url, params=params)
+        return response.json()
 
     # --- Settings Tool ---
-    def browse_settings(self) -> Any:
+    def browse_settings(self) -> Dict[str, Any]: # Changed return type
         """
         Fetches site settings by making a GET request to the settings endpoint.
         
@@ -505,10 +509,16 @@ class GhostContentApp(APIApplication):
         Returns:
             The result of the GET request to retrieve site settings.
         
+        Raises:
+            httpx.HTTPError: If the API request fails.
+            
         Tags:
             fetch, settings, management, important
         """
-        return self._execute_get_request("settings/", params=None)
+        url = f"{self.base_url}settings/"
+        params = self._build_common_params() # Only the API key is needed for this endpoint via _build_common_params
+        response = self._get(url, params=params)
+        return response.json()
 
     def list_tools(self) -> List[Callable]:
         """Returns a list of methods exposed as tools for the Ghost Content API."""
